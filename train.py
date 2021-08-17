@@ -9,6 +9,7 @@ from path import Path
 from ignite.engine import Engine, Events
 from torch.optim import Adam
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from data import BezierRandomGenerator, solve_system_lambdas, bezier_curve_batch
 from model import Model
@@ -99,6 +100,27 @@ def test(model, device, run_folder, test_dl: DataLoader, d: int):
     return result
 
 
+def setup_logger(engine, model, opt, run_folder):
+    logger = SummaryWriter(run_folder)
+
+    @engine.on(Events.ITERATION_COMPLETED(every=1_000))
+    def log_loss(engine: Engine):
+        logger.add_scalar('train/loss', engine.state.output['loss'].item(), engine.state.iteration)
+        logger.add_scalar('train/running_avg_loss', engine.state.metrics['running_avg_loss'], engine.state.iteration)
+
+    @engine.on(Events.ITERATION_COMPLETED(every=1_000))
+    def log_model_params(engine: Engine):
+        norm_params = sum(p.norm(1).item() for p in model.parameters())
+        norm_grad = sum(p.grad.norm(1).item() for p in model.parameters() if p.grad is not None)
+        logger.add_scalar('model/norm_params', norm_params, engine.state.iteration)
+        logger.add_scalar('model/norm_params_grad', norm_grad, engine.state.iteration)
+
+    @engine.on(Events.ITERATION_COMPLETED(every=1_000))
+    def log_lr(engine: Engine):
+        lrs = [param_group['lr'] for param_group in opt.param_groups]
+        avg_lr = sum(lrs) / len(lrs)
+        logger.add_scalar('opt/avg_lr', avg_lr, engine.state.iteration)
+
 def train(args, run_folder):
     model = Model(args.d).to(args.device)
     opt = Adam(model.parameters(), args.lr)
@@ -112,7 +134,10 @@ def train(args, run_folder):
     RunningAverage(output_transform=itemgetter('loss')).attach(trainer, 'running_avg_loss')
     ProgressBar().attach(trainer, ['running_avg_loss'])
 
+
     trainer.add_event_handler(Events.EPOCH_COMPLETED, test, model, args.device, run_folder, eval_dl, args.d)
+
+    setup_logger(trainer, model, opt, run_folder)
 
     trainer.run(dl, max_epochs=1)
 
