@@ -4,9 +4,10 @@ from operator import itemgetter
 import torch.nn
 import yaml
 from ignite.contrib.handlers import ProgressBar
-from ignite.metrics import RunningAverage, Average, MetricsLambda
+from ignite.metrics import RunningAverage, Average, MetricsLambda, VariableAccumulation
 from path import Path
 from ignite.engine import Engine, Events
+from ignite.handlers import EarlyStopping
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -50,15 +51,16 @@ class EvalStep:
         self.opt = opt
         self.device = device
         self.mse = torch.nn.MSELoss()
+        self.max_mse = torch.nn.MSELoss(reduction='none')
 
     def __call__(self, batch):
         e = batch['e']
-        d1: int = batch['b'].shape[-1]
+        d1: int = batch['b'].shape[-1]  # = d + 1
         d = d1 - 1
         lambdas = self.model(e)
         t_pred = solve_system_lambdas(lambdas).squeeze(-1)  # [bs, n]
-        T_pred = torch.zeros(*t_pred.shape, d1, device=e.device)
-        T1_pred = torch.zeros(*t_pred.shape, d1, device=e.device)
+        T_pred = torch.zeros(*t_pred.shape, d1, device=e.device)   # [bs, n, d+1], T[_, i, j] = t_i ** j (first dim is ignored because is batch dimension)
+        T1_pred = torch.zeros(*t_pred.shape, d1, device=e.device)  # [bs, n, d+1], T[_, i, j] = (1 -t_i) ** (d-j) (first dim is ignored because is batch dimension)
         for j in range(d1):
             T_pred[:, :, j] = t_pred.pow(j)
             T1_pred[:, :, j] = (1 - t_pred).pow(d - j)
@@ -67,7 +69,9 @@ class EvalStep:
         c_hat = torch.inverse(A_T @ A) @ A_T @ batch['p']
         p_pred = bezier_curve_batch(c_hat, t_pred)
         loss_value = self.mse(batch['p'], p_pred)
-        return dict(**batch, p_pred=p_pred, t_pred=t_pred, loss=loss_value)
+        max_loss = self.max_mse(batch['p'], p_pred).max()
+
+        return dict(**batch, p_pred=p_pred, t_pred=t_pred, loss=loss_value, max_loss=max_loss)
 
 
 class TrainStep:
@@ -84,18 +88,36 @@ class TrainStep:
         return eval_output
 
 
-def test(model, device, run_folder, test_dl: DataLoader, d: int):
+def eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: int = None):
     eval_step = EvalStep(model, device)
     evaluator = Engine(lambda e, b: eval_step(b))
     Average(itemgetter('loss')).attach(evaluator, 'avg_loss')
+    VariableAccumulation(max, output_transform=itemgetter('loss')).attach(evaluator, 'max_loss')
+    evaluator.state.p_s = []
+    evaluator.state.p_pred_s = []
+    evaluator.state.losses = []
+
+    @evaluator.on(Events.ITERATION_COMPLETED)
+    def accumulate_output(engine):
+        engine.state.losses.append(engine.state.output['max_loss'].item())
+        engine.state.p_s.append(engine.state.output['p'])
+        engine.state.p_pred_s.append(engine.state.output['p_pred'])
+
     model.eval()
     with torch.no_grad():
         evaluator.run(test_dl, 1)
     avg_loss = evaluator.state.metrics['avg_loss']
+    evaluator.state.p_s = torch.cat(evaluator.state.p_s, dim=0)
+    evaluator.state.p_pred_s = torch.cat(evaluator.state.p_pred_s, dim=0)
+    hausdorff_error = max(torch.min((x - evaluator.state.p_s).pow(2)).item() for x in evaluator.state.p_pred_s)
+    evaluator.state.metrics['hausdorff_loss'] = hausdorff_error
     model.train()
     print(f'avg loss for d = {d} is {avg_loss}')
-    result = dict(d=d, avg_loss=avg_loss)
-    with open(run_folder / 'test_result.yaml', 'w') as f:
+    result = dict(d=d, avg_loss=avg_loss,
+                  max_loss=max(evaluator.state.losses),
+                  hausdorff_loss=hausdorff_error)
+    dst_path = run_folder / f'test_result_{iteration}.yaml' if iteration else run_folder / 'test_result.yaml'
+    with open(dst_path, 'w') as f:
         yaml.dump(result, f)
     return result
 
@@ -121,6 +143,7 @@ def setup_logger(engine, model, opt, run_folder):
         avg_lr = sum(lrs) / len(lrs)
         logger.add_scalar('opt/avg_lr', avg_lr, engine.state.iteration)
 
+
 def train(args, run_folder):
     model = Model(args.d).to(args.device)
     opt = Adam(model.parameters(), args.lr)
@@ -133,15 +156,22 @@ def train(args, run_folder):
 
     RunningAverage(output_transform=itemgetter('loss')).attach(trainer, 'running_avg_loss')
     ProgressBar().attach(trainer, ['running_avg_loss'])
+    es = EarlyStopping(5, lambda e: -e.state.metrics['running_avg_loss'], trainer)
+    trainer.add_event_handler(Events.ITERATION_COMPLETED(every=5_000), es)
 
-
-    trainer.add_event_handler(Events.EPOCH_COMPLETED, test, model, args.device, run_folder, eval_dl, args.d)
+    @trainer.on(Events.ITERATION_COMPLETED(once=6_250) | Events.ITERATION_COMPLETED(every=5_000))
+    def run_eval(engine):
+        return eval(model, args.device, run_folder, eval_dl, args.d, engine.state.iteration)
 
     setup_logger(trainer, model, opt, run_folder)
 
+    @trainer.on(Events.ITERATION_COMPLETED(every=5_000))
+    def save_model(engine):
+        torch.save(model.state_dict(), run_folder / f'model_{engine.state.iteration}.pth')
+
     trainer.run(dl, max_epochs=1)
 
-    torch.save(model.parameters(), run_folder / 'model.pth')
+    torch.save(model.state_dict(), run_folder / 'model.pth')
 
 
 def main():
