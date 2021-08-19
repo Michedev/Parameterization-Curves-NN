@@ -9,7 +9,7 @@ class ResBlock(nn.Module):
         self.n_out = n_out
         self.main_road = nn.Sequential(
             nn.Linear(n_in, n_hid),
-            nn.BatchNorm1d(n_hid),  # warning: dimension problem because prev layer output is [n, 2, n_hid] but batch norm needs n_hid in second dimension
+            nn.BatchNorm1d(n_hid),
             nn.ReLU(),
             nn.Linear(n_hid, n_hid),
             nn.BatchNorm1d(n_hid),

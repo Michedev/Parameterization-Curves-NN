@@ -62,7 +62,7 @@ class BezierRandomGenerator(Dataset):
     def __init__(self, d: int, n: int):
         self.d = d
         self.n = n
-        self.b = torch.FloatTensor([binom(d, i) for i in range(d+1)]).view(1, d+1)
+        self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
 
     def __len__(self):
         return self.n
@@ -78,7 +78,7 @@ class BezierRandomGenerator(Dataset):
         e = torch.zeros(p1.shape[0] - 1, 2)
         for i in range(p1.shape[0] - 1):
             e[i] = p1[i + 1] - p1[i]
-        return dict(p=p1, e=e, c=c, b=self.b)
+        return dict(p=p1, e=e, c=c, b=self.coef_bins)
 
 
 def solve_system_lambdas(lambdas):
