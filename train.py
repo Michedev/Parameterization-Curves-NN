@@ -88,7 +88,7 @@ class TrainStep:
         return eval_output
 
 
-def eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: int = None):
+def run_eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: int = None, fname='test_result'):
     eval_step = EvalStep(model, device)
     evaluator = Engine(lambda e, b: eval_step(b))
     Average(itemgetter('loss')).attach(evaluator, 'avg_loss')
@@ -116,7 +116,7 @@ def eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: int 
     result = dict(d=d, avg_loss=avg_loss,
                   max_loss=max(evaluator.state.losses),
                   hausdorff_loss=hausdorff_error)
-    dst_path = run_folder / f'test_result_{iteration}.yaml' if iteration else run_folder / 'test_result.yaml'
+    dst_path = run_folder / f'{fname}_{iteration}.yaml' if iteration else run_folder / f'{fname}.yaml'
     with open(dst_path, 'w') as f:
         yaml.dump(result, f)
     return result
@@ -161,7 +161,7 @@ def train(args, run_folder):
 
     @trainer.on(Events.ITERATION_COMPLETED(once=6_250) | Events.ITERATION_COMPLETED(every=5_000))
     def run_eval(engine):
-        return eval(model, args.device, run_folder, eval_dl, args.d, engine.state.iteration)
+        return run_eval(model, args.device, run_folder, eval_dl, args.d, engine.state.iteration)
 
     setup_logger(trainer, model, opt, run_folder)
 

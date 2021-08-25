@@ -1,3 +1,5 @@
+import math
+
 import torch
 from scipy.special import binom
 from torch.utils.data import Dataset
@@ -50,11 +52,42 @@ def bezier_curve_batch(c, t):
 
 def generate_curve(d: int):
     n = 2 * d + 1
-    c = torch.randn(d+1, 2)
+    c = torch.randn(d + 1, 2)
     t = torch.rand(n).sort()[0]
     t[0] = 0
     t[-1] = 1
     return c, t
+
+
+def scale_points(p):
+    min_p = [torch.min(p[:, 0]), torch.min(p[:, 1])]
+    max_p = (p[:, 0].max() - min_p[0], p[:, 1].max() - min_p[1])
+    max_p = max(max_p)
+    min_p = torch.FloatTensor(min_p).unsqueeze(0)
+    p1 = (p - min_p) / max_p
+    return p1
+
+
+def scholz_fun(d: int, n: int):
+    a_0 = torch.randn(1, 2)
+    A = torch.randn(d, 2, 1)
+    B = torch.randn(d, 2, 1)
+    j = torch.arange(d) + 1
+    j = j.view(d, 1, 1)
+    t = torch.rand(1, 1, n)
+    t[0] = 0
+    t[-1] = 1.0
+    t = torch.sort(t).values
+    cos_jt = torch.cos(j * t)
+    sin_jt = torch.sin(j * t)
+    i = torch.arange(n) + 1
+    i = i.unsqueeze(-1)   # [n, 1]
+    A_cos_jt = A * cos_jt  #[d, 2, n]
+    B_cos_jt = B * cos_jt  #[d, 2, n]
+    A_cos_jt = A_cos_jt.sum(dim=0).permute(1, 0)  # [n, 2]
+    B_cos_jt = B_cos_jt.sum(dim=0).permute(1, 0)  # [n, 2]
+    p = a_0 + A_cos_jt + i * B_cos_jt
+    return dict(p=p, t=t, A=A, B=B)
 
 
 class BezierRandomGenerator(Dataset):
@@ -70,15 +103,32 @@ class BezierRandomGenerator(Dataset):
     def __getitem__(self, item):
         c, t = generate_curve(self.d)
         p: torch.Tensor = bezier_curve(c, t)
-        min_p = [torch.min(p[:, 0]), torch.min(p[:, 1])]
-        max_p = (p[:, 0].max() - min_p[0], p[:, 1].max() - min_p[1])
-        max_p = max(max_p)
-        min_p = torch.FloatTensor(min_p).unsqueeze(0)
-        p1 = (p - min_p) / max_p
+        p1 = scale_points(p)
         e = torch.zeros(p1.shape[0] - 1, 2)
         for i in range(p1.shape[0] - 1):
             e[i] = p1[i + 1] - p1[i]
         return dict(p=p1, e=e, c=c, b=self.coef_bins)
+
+
+class TrigonometricRandomGenerator(Dataset):
+
+    def __init__(self, d: int, n: int):
+        self.d = d
+        self.n = n
+        self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
+
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, item):
+        data = scholz_fun(self.d, self.n)
+        p: torch.Tensor = data['p']
+        p1 = scale_points(p)
+        e = torch.zeros(p1.shape[0] - 1, 2)
+        for i in range(p1.shape[0] - 1):
+            e[i] = p1[i + 1] - p1[i]
+        return dict(p=p1, e=e, b=self.coef_bins)
 
 
 def solve_system_lambdas(lambdas):
