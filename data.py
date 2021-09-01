@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 
 def bezier_curve(c, t):
     """
-    :param c: vector of control points with shape [d1+1, 2]
+    :param c: vector of control points with shape [d+1, 2]
     :param t: vector of input parameters with shape [n]
     :return: the value of the curve at the parameters t
     """
@@ -19,9 +19,9 @@ def bezier_curve(c, t):
     T1 = torch.zeros(n, d1)
     B = torch.zeros(d1, 1)
     for j in range(d1):
-        T[:, j - 1] = t ** j
-        T1[:, j - 1] = one_min_t ** (d - j)
-        B[j] = binom(d1, j)
+        T[:, j] = t ** j
+        T1[:, j] = one_min_t ** (d - j)
+        B[j] = binom(d, j)
     P = torch.matmul(T * T1, B * c)
     return P
 
@@ -150,3 +150,18 @@ def solve_system_lambdas(lambdas):
         A[:, i, i + 1] = lambdas[:, i - 1, 1]
     t = torch.inverse(A) @ b
     return t
+
+
+def get_optimal_c(p: torch.Tensor, coef_bins: torch.Tensor, d: int, t_pred: torch.Tensor, device: str):
+    d1 = d + 1
+    T_pred = torch.zeros(*t_pred.shape, d1,
+                         device=device)  # [bs, n, d+1], T[_, i, j] = t_i ** j (first dim is ignored because is batch dimension)
+    T1_pred = torch.zeros(*t_pred.shape, d1,
+                          device=device)  # [bs, n, d+1], T[_, i, j] = (1 -t_i) ** (d-j) (first dim is ignored because is batch dimension)
+    for j in range(d1):
+        T_pred[:, :, j] = t_pred.pow(j)
+        T1_pred[:, :, j] = (1 - t_pred).pow(d - j)
+    A: torch.FloatTensor = T_pred * T1_pred * coef_bins
+    A_T = A.transpose(1, 2)
+    c_hat = torch.inverse(A_T @ A) @ A_T @ p
+    return c_hat

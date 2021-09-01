@@ -4,7 +4,7 @@ from operator import itemgetter
 import torch.nn
 import yaml
 from ignite.contrib.handlers import ProgressBar
-from ignite.metrics import RunningAverage, Average, MetricsLambda, VariableAccumulation
+from ignite.metrics import RunningAverage, Average, VariableAccumulation
 from path import Path
 from ignite.engine import Engine, Events
 from ignite.handlers import EarlyStopping
@@ -12,7 +12,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data import BezierRandomGenerator, solve_system_lambdas, bezier_curve_batch
+from data import BezierRandomGenerator, solve_system_lambdas, bezier_curve_batch, get_optimal_c
 from model import Model
 
 ROOT = Path(__file__).parent
@@ -59,19 +59,12 @@ class EvalStep:
         d = d1 - 1
         lambdas = self.model(e)
         t_pred = solve_system_lambdas(lambdas).squeeze(-1)  # [bs, n]
-        T_pred = torch.zeros(*t_pred.shape, d1, device=e.device)   # [bs, n, d+1], T[_, i, j] = t_i ** j (first dim is ignored because is batch dimension)
-        T1_pred = torch.zeros(*t_pred.shape, d1, device=e.device)  # [bs, n, d+1], T[_, i, j] = (1 -t_i) ** (d-j) (first dim is ignored because is batch dimension)
-        for j in range(d1):
-            T_pred[:, :, j] = t_pred.pow(j)
-            T1_pred[:, :, j] = (1 - t_pred).pow(d - j)
-        A: torch.FloatTensor = T_pred * T1_pred * batch['b']
-        A_T = A.transpose(1, 2)
-        c_hat = torch.inverse(A_T @ A) @ A_T @ batch['p']
+        c_hat = get_optimal_c(batch['p'], batch['b'], d, t_pred, e.device)
         p_pred = bezier_curve_batch(c_hat, t_pred)
         loss_value = self.mse(batch['p'], p_pred)
         max_loss = self.max_mse(batch['p'], p_pred).max()
 
-        return dict(**batch, p_pred=p_pred, t_pred=t_pred, loss=loss_value, max_loss=max_loss)
+        return dict(**batch, p_pred=p_pred, t_pred=t_pred, loss=loss_value, max_loss=max_loss, c_hat=c_hat)
 
 
 class TrainStep:
