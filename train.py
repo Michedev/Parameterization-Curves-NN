@@ -153,7 +153,7 @@ def train(args, run_folder):
     trainer.add_event_handler(Events.ITERATION_COMPLETED(every=5_000), es)
 
     @trainer.on(Events.ITERATION_COMPLETED(once=6_250) | Events.ITERATION_COMPLETED(every=5_000))
-    def run_eval(engine):
+    def training_eval(engine):
         return run_eval(model, args.device, run_folder, eval_dl, args.d, engine.state.iteration)
 
     setup_logger(trainer, model, opt, run_folder)
