@@ -1,8 +1,8 @@
-import math
+from typing import Iterator
 
 import torch
 from scipy.special import binom
-from torch.utils.data import Dataset
+from torch.utils.data import IterableDataset
 
 
 def bezier_curve(c, t):
@@ -50,8 +50,9 @@ def bezier_curve_batch(c, t):
     return P
 
 
-def generate_curve(d: int):
-    n = 2 * d + 1
+def generate_curve(d: int, n : int = None):
+    if n is None:
+        n = 2 * d + 1
     c = torch.randn(d + 1, 2)
     t = torch.rand(n).sort()[0]
     t[0] = 0
@@ -68,40 +69,60 @@ def scale_points(p):
     return p1
 
 
-def scholz_fun(d: int, n: int):
+def trigonometric_fun(d: int, n: int):
+    """
+    Compute f(t_i) = a_0 + \sum_{j=1}^{d}  a_j cos(jt) + i \sum_{j=1}^{d} b_j sin(jt)  i=1...n
+    a_0, a_j, b_j are sampled from N(0,1)
+    t_i are sampled from U(0,1) with t_0 = 0 and t_n = 1
+    :param d: degree of trigonometric function
+    :param n: number of parameters
+    :return: data points evaluated at t_i with shape [n, 2]
+    """
+    t = torch.rand(n)
+    t[0] = 0.0
+    t[-1] = 1.0
+    return trigonometric_fun_t(d, t)
+
+def trigonometric_fun_t(d: int, t: torch.Tensor):
+    """
+    Compute f(t_i) = a_0 + \sum_{j=1}^{d}  a_j cos(jt) + i \sum_{j=1}^{d} b_j sin(jt)  i=1...n
+    a_0, a_j, b_j are sampled from N(0,1)
+    t_i must be in range [0,1]
+    :param d: degree of trigonometric function
+    :param t: array of parameters with shape [n]
+    :return: data points evaluated at t_i with shape [n, 2]
+    """
+
+    assert len(t.shape) == 1
+    assert t[0] == 0.0 and t[-1] == 1.0 and t.min() >= 0.0 and t.max() <= 1.0
+    n = len(t)
     a_0 = torch.randn(1, 2)
     A = torch.randn(d, 2, 1)
     B = torch.randn(d, 2, 1)
     j = torch.arange(d) + 1
     j = j.view(d, 1, 1)
-    t = torch.rand(1, 1, n)
-    t[0] = 0
-    t[-1] = 1.0
+    t = t.view(1, 1, -1)
     t = torch.sort(t).values
     cos_jt = torch.cos(j * t)
     sin_jt = torch.sin(j * t)
     i = torch.arange(n) + 1
     i = i.unsqueeze(-1)   # [n, 1]
     A_cos_jt = A * cos_jt  #[d, 2, n]
-    B_cos_jt = B * cos_jt  #[d, 2, n]
+    B_sin_jt = B * sin_jt  #[d, 2, n]
     A_cos_jt = A_cos_jt.sum(dim=0).permute(1, 0)  # [n, 2]
-    B_cos_jt = B_cos_jt.sum(dim=0).permute(1, 0)  # [n, 2]
-    p = a_0 + A_cos_jt + i * B_cos_jt
+    B_sin_jt = B_sin_jt.sum(dim=0).permute(1, 0)  # [n, 2]
+    p = a_0 + A_cos_jt + i * B_sin_jt
     return dict(p=p, t=t, A=A, B=B)
 
 
-class BezierRandomGenerator(Dataset):
+class BezierRandomGenerator(IterableDataset):
 
-    def __init__(self, d: int, n: int):
-        self.d = d
-        self.n = n
-        self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
+    def __iter__(self) -> Iterator[dict]:
+        while True:
+            yield self.sample_points_bezier()
 
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, item):
-        c, t = generate_curve(self.d)
+    def sample_points_bezier(self):
+        c, t = generate_curve(self.d, self.n)
         p: torch.Tensor = bezier_curve(c, t)
         p1 = scale_points(p)
         e = torch.zeros(p1.shape[0] - 1, 2)
@@ -109,20 +130,30 @@ class BezierRandomGenerator(Dataset):
             e[i] = p1[i + 1] - p1[i]
         return dict(p=p1, e=e, c=c, b=self.coef_bins)
 
+    def __init__(self, d: int, n: int):
+        self.d = d
+        self.n = n
+        self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
 
-class TrigonometricRandomGenerator(Dataset):
+    def __len__(self):
+        return self.n
+
+
+
+class TrigonometricRandomGenerator(IterableDataset):
+
 
     def __init__(self, d: int, n: int):
         self.d = d
         self.n = n
         self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
 
+    def __iter__(self) -> Iterator[dict]:
+        while True:
+            yield self.sample_trigonometric_points()
 
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, item):
-        data = scholz_fun(self.d, self.n)
+    def sample_trigonometric_points(self) -> dict:
+        data = trigonometric_fun(self.d, self.n)
         p: torch.Tensor = data['p']
         p1 = scale_points(p)
         e = torch.zeros(p1.shape[0] - 1, 2)
