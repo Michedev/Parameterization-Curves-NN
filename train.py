@@ -34,8 +34,8 @@ def get_new_experiment_folder():
 def setup_argparser():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', type=int, required=True, dest='d')
-    parser.add_argument('--num-curves', '-n', type=int, default=1_000_000, dest='n')
-    parser.add_argument('--num-curves-eval', '--n-eval', type=int, default=1_000, dest='n_eval')
+    parser.add_argument('--num-train-curves', '--train-size', '-n', type=int, default=1_000_000, dest='train_size')
+    parser.add_argument('--num-test-curves', '--test-size', '--n-eval', type=int, default=1_000, dest='test_size')
     parser.add_argument('--batch-size', '-b', type=int, dest='batch_size', default=16)
     parser.add_argument('--lr', '-l', type=float, dest='lr', default=1e-3)
     parser.add_argument('--seed', '-s', type=int, dest='seed', default=13)
@@ -81,7 +81,7 @@ class TrainStep:
         return eval_output
 
 
-def run_eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: int = None, fname='test_result'):
+def run_eval(model, device, run_folder, test_dl: DataLoader, d: int, test_size: int = None, iteration: int = None, fname='test_result'):
     eval_step = EvalStep(model, device)
     evaluator = Engine(lambda e, b: eval_step(b))
     Average(itemgetter('loss')).attach(evaluator, 'avg_loss')
@@ -98,7 +98,7 @@ def run_eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: 
 
     model.eval()
     with torch.no_grad():
-        evaluator.run(test_dl, 1)
+        evaluator.run(test_dl, 1, test_size)
     avg_loss = evaluator.state.metrics['avg_loss']
     evaluator.state.p_s = torch.cat(evaluator.state.p_s, dim=0)
     evaluator.state.p_pred_s = torch.cat(evaluator.state.p_pred_s, dim=0)
@@ -109,9 +109,10 @@ def run_eval(model, device, run_folder, test_dl: DataLoader, d: int, iteration: 
     result = dict(d=d, avg_loss=avg_loss,
                   max_loss=max(evaluator.state.losses),
                   hausdorff_loss=hausdorff_error)
-    dst_path = run_folder / f'{fname}_{iteration}.yaml' if iteration else run_folder / f'{fname}.yaml'
-    with open(dst_path, 'w') as f:
-        yaml.dump(result, f)
+    if fname:
+        dst_path = run_folder / f'{fname}_{iteration}.yaml' if iteration else run_folder / f'{fname}.yaml'
+        with open(dst_path, 'w') as f:
+            yaml.dump(result, f)
     return result
 
 
@@ -154,7 +155,7 @@ def train(args, run_folder):
 
     @trainer.on(Events.ITERATION_COMPLETED(once=6_250) | Events.ITERATION_COMPLETED(every=5_000))
     def training_eval(engine):
-        return run_eval(model, args.device, run_folder, eval_dl, args.d, engine.state.iteration)
+        return run_eval(model, args.device, run_folder, eval_dl, args.d, args.test_size, engine.state.iteration)
 
     setup_logger(trainer, model, opt, run_folder)
 
@@ -162,7 +163,7 @@ def train(args, run_folder):
     def save_model(engine):
         torch.save(model.state_dict(), run_folder / f'model_{engine.state.iteration}.pth')
 
-    trainer.run(dl, max_epochs=1)
+    trainer.run(dl, max_epochs=1, epoch_length=args.train_size)
 
     torch.save(model.state_dict(), run_folder / 'model.pth')
 
