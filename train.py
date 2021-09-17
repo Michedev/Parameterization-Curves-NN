@@ -50,19 +50,22 @@ class EvalStep:
         self.model = model
         self.opt = opt
         self.device = device
-        self.mse = torch.nn.MSELoss()
+        self.mse = torch.nn.MSELoss(reduction='none')
         self.max_mse = torch.nn.MSELoss(reduction='none')
 
     def __call__(self, batch):
+        for k, el in batch.items():
+            if isinstance(el, torch.Tensor):
+                batch[k] = el.to(self.device)
         e = batch['e']
         d1: int = batch['b'].shape[-1]  # = d + 1
         d = d1 - 1
         lambdas = self.model(e)
-        t_pred = solve_system_lambdas(lambdas).squeeze(-1)  # [bs, n]
-        c_hat = get_optimal_c(batch['p'], batch['b'], d, t_pred, e.device)
+        t_pred = solve_system_lambdas(lambdas).squeeze(-1).to(self.device)  # [bs, n]
+        c_hat = get_optimal_c(batch['p'], batch['b'], d, t_pred, e.device).to(self.device)
         p_pred = bezier_curve_batch(c_hat, t_pred)
-        loss_value = self.mse(batch['p'], p_pred)
-        max_loss = self.max_mse(batch['p'], p_pred).max()
+        loss_value = self.mse(batch['p'], p_pred).sum(dim=-1).mean()
+        max_loss = self.mse(batch['p'], p_pred).max()
 
         return dict(**batch, p_pred=p_pred, t_pred=t_pred, loss=loss_value, max_loss=max_loss, c_hat=c_hat)
 
@@ -141,8 +144,9 @@ def setup_logger(engine, model, opt, run_folder):
 def train(args, run_folder):
     model = Model(args.d).to(args.device)
     opt = Adam(model.parameters(), args.lr)
-    dataset = BezierRandomGenerator(args.d, args.n)
-    eval_dataset = BezierRandomGenerator(args.d, args.n_eval)
+    n = 2 * args.d + 1
+    dataset = BezierRandomGenerator(args.d, n)
+    eval_dataset = BezierRandomGenerator(args.d, n)
     dl = DataLoader(dataset, batch_size=args.batch_size)
     eval_dl = DataLoader(eval_dataset, batch_size=args.batch_size)
     step = TrainStep(model, args.device, opt)

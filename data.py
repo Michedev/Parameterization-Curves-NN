@@ -11,13 +11,14 @@ def bezier_curve(c, t):
     :param t: vector of input parameters with shape [n]
     :return: the value of the curve at the parameters t
     """
+    assert c.device == t.device
     n = t.shape[0]
     d1 = c.shape[0]  # = d + 1
     d = d1 - 1
     one_min_t = 1 - t
-    T = torch.zeros(n, d1)
-    T1 = torch.zeros(n, d1)
-    B = torch.zeros(d1, 1)
+    T = torch.zeros(n, d1, device=c.device)
+    T1 = torch.zeros(n, d1, device=c.device)
+    B = torch.zeros(d1, 1, device=c.device)
     for j in range(d1):
         T[:, j] = t ** j
         T1[:, j] = one_min_t ** (d - j)
@@ -33,15 +34,16 @@ def bezier_curve_batch(c, t):
     :param t: vector of input parameters with shape [bs, n]
     :return: the value of the curve at the parameters t
     """
+    assert c.device == t.device
     t = t.squeeze(-1)
     bs = t.shape[0]
     n = t.shape[1]
     d1 = c.shape[1]
     d = d1 - 1
     one_min_t = 1 - t
-    T = torch.zeros(bs, n, d1)
-    T1 = torch.zeros(bs, n, d1)
-    B = torch.zeros(1, d1, 1)
+    T = torch.zeros(bs, n, d1, device=c.device)
+    T1 = torch.zeros(bs, n, d1, device=c.device)
+    B = torch.zeros(1, d1, 1, device=c.device)
     for j in range(d1):
         T[:, :, j] = t ** j
         T1[:, :, j] = one_min_t ** (d - j)
@@ -64,12 +66,12 @@ def scale_points(p):
     min_p = [torch.min(p[:, 0]), torch.min(p[:, 1])]
     max_p = (p[:, 0].max() - min_p[0], p[:, 1].max() - min_p[1])
     max_p = max(max_p)
-    min_p = torch.FloatTensor(min_p).unsqueeze(0)
+    min_p = torch.FloatTensor(min_p).to(p.device).unsqueeze(0)
     p1 = (p - min_p) / max_p
     return p1
 
 
-def trigonometric_fun(d: int, n: int):
+def trigonometric_fun(d: int, n: int, device = 'cpu'):
     """
     Compute f(t_i) = a_0 + \sum_{j=1}^{d}  a_j cos(jt) + i \sum_{j=1}^{d} b_j sin(jt)  i=1...n
     a_0, a_j, b_j are sampled from N(0,1)
@@ -78,7 +80,7 @@ def trigonometric_fun(d: int, n: int):
     :param n: number of parameters
     :return: data points evaluated at t_i with shape [n, 2]
     """
-    t = torch.rand(n)
+    t = torch.rand(n, device=device)
     t[0] = 0.0
     t[-1] = 1.0
     return trigonometric_fun_t(d, t)
@@ -96,16 +98,16 @@ def trigonometric_fun_t(d: int, t: torch.Tensor):
     assert len(t.shape) == 1
     assert t[0] == 0.0 and t[-1] == 1.0 and t.min() >= 0.0 and t.max() <= 1.0
     n = len(t)
-    a_0 = torch.randn(1, 2)
-    A = torch.randn(d, 2, 1)
-    B = torch.randn(d, 2, 1)
-    j = torch.arange(d) + 1
+    a_0 = torch.randn(1, 2, device=t.device)
+    A = torch.randn(d, 2, 1, device=t.device)
+    B = torch.randn(d, 2, 1, device=t.device)
+    j = torch.arange(d, device=t.device) + 1
     j = j.view(d, 1, 1)
     t = t.view(1, 1, -1)
     t = torch.sort(t).values
     cos_jt = torch.cos(j * t)
     sin_jt = torch.sin(j * t)
-    i = torch.arange(n) + 1
+    i = torch.arange(n, device=t.device) + 1
     i = i.unsqueeze(-1)   # [n, 1]
     A_cos_jt = A * cos_jt  #[d, 2, n]
     B_sin_jt = B * sin_jt  #[d, 2, n]
