@@ -96,7 +96,6 @@ def trigonometric_fun_t(d: int, t: torch.Tensor):
     """
 
     assert len(t.shape) == 1
-    assert t[0] == 0.0 and t[-1] == 1.0 and t.min() >= 0.0 and t.max() <= 1.0
     n = len(t)
     a_0 = torch.randn(1, 2, device=t.device)
     A = torch.randn(d, 2, 1, device=t.device)
@@ -145,9 +144,11 @@ class BezierRandomGenerator(IterableDataset):
 class TrigonometricRandomGenerator(IterableDataset):
 
 
-    def __init__(self, d: int, n: int):
+    def __init__(self, d: int, n: int, min_t_value: float = 0.0, max_t_value: float = 1.0):
         self.d = d
         self.n = n
+        self.min_t_value = min_t_value
+        self.max_t_value = max_t_value
         self.coef_bins = torch.FloatTensor([binom(d, i) for i in range(d + 1)]).view(1, d + 1)
 
     def __iter__(self) -> Iterator[dict]:
@@ -155,7 +156,9 @@ class TrigonometricRandomGenerator(IterableDataset):
             yield self.sample_trigonometric_points()
 
     def sample_trigonometric_points(self) -> dict:
-        data = trigonometric_fun(self.d, self.n)
+        t = torch.rand(self.n) *(self.max_t_value - self.min_t_value) + self.min_t_value
+        t[0] = self.min_t_value; t[-1] = self.max_t_value
+        data = trigonometric_fun_t(self.d, t)
         p: torch.Tensor = data['p']
         p1 = scale_points(p)
         e = torch.zeros(p1.shape[0] - 1, 2)
