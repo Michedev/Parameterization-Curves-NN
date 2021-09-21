@@ -11,8 +11,8 @@ import yaml
 ROOT: Path = Path(__file__).parent.abspath()
 RUNS_DIR: Path = ROOT / 'run'
 
-REGEX_TRIGONOMETRIC_RESULT_FILE = r'test_result_trigonometric_([0-9]+)_([0-9]+)\.yaml'
-REGEX_RESULT_FILE = r'test_result_([0-9]+)_([0-9]+)\.yaml'
+REGEX_TRIGONOMETRIC_RESULT_FILE = r'test_result_trigonometric_(?P<iteration>[0-9]+)_([0-9]+)\.yaml'
+REGEX_RESULT_FILE = r'test_result_(?P<iteration>[0-9]+)\.yaml'
 
 
 def avg_tables(tables):
@@ -23,24 +23,22 @@ def avg_tables(tables):
     return result
 
 
-def gather_results_run(run_folder, regex_result_file: str, gather_parameters=None) -> pd.DataFrame:
-    if gather_parameters is None:
-        gather_parameters = ['d']
+def gather_results_run(run_folder, regex_result_file: str, gather_parameters) -> pd.DataFrame:
     table = []
     for result_yaml in run_folder.files('test_result_*.yaml'):
         m = re.match(regex_result_file, result_yaml.basename())
         if m is not None:
             with open(result_yaml, 'r') as f:
                 data = yaml.safe_load(f)
-            iteration = m.group(1)
-            iteration = int(iteration)
-            data['iteration'] = iteration
+            fname_infos = m.groupdict()
+            if 'iteration' in fname_infos: fname_infos['iteration'] = int(fname_infos['iteration'])
+            data = dict(**data, **fname_infos)
             table.append(data)
     table = pd.DataFrame(table)
-    print(len(table))
-    print('=' * 50)
-    print('Table iteration 100 000')
-    print(table.loc[table.iteration == 6_250])
+    # print(len(table))
+    # print('=' * 50)
+    # print('Table iteration 100 000')
+    # print(table.loc[table.iteration == 6_250])
     table = table.loc[table.groupby(gather_parameters)['avg_loss'].idxmin()]
     print('=' * 50)
     print('Table best results')
@@ -59,13 +57,13 @@ def setup_argparse():
 
 
 def gather_results_runs_polynomials(args) -> pd.DataFrame:
-    return gather_results_runs(['avg_loss', 'max_loss', 'd'], ['d'], r'test_result_([0-9]+)\.yaml')
+    return gather_results_runs(['avg_loss', 'max_loss', 'd'], ['d'], REGEX_RESULT_FILE)
 
 
 def gather_results_runs_trigonometric(args) -> pd.DataFrame:
     assert args.trigonometric
     return gather_results_runs(['avg_loss', 'max_loss', 'd', 'r'], ['d', 'r'],
-                               r'test_result_trigonometric_([0-9]+)\.yaml')
+                               REGEX_TRIGONOMETRIC_RESULT_FILE)
 
 
 def gather_results_runs(vars, index, regex_result_file):
@@ -77,11 +75,6 @@ def gather_results_runs(vars, index, regex_result_file):
         tables.append(table)
     tables = pd.concat(tables)
     return tables
-
-
-def calc_mean_std(tables, group_vars):
-
-    return stats_table
 
 
 def format_stats(stats_table, float_format='%.6f'):

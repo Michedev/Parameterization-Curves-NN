@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from data import BezierRandomGenerator, bezier_curve_batch, get_optimal_c, bezier_curve, scale_points, \
     TrigonometricRandomGenerator, trigonometric_fun, trigonometric_fun_t
 from model import Model
+from test import d_r_map
 from train import TrainStep, EvalStep
 
 PLOTS = Path(__file__).parent.parent / 'plots'
@@ -72,24 +73,19 @@ def plot_closed_form_f_trigonoetric(curve: dict, d: int, t_func, t_func_name: st
 
 
 @torch.no_grad()
-def draw_samples(d_s: list, num_samples: int, model_paths: list, trigonometric: bool = False, trigonometric_degrees: list = None):
-    if trigonometric_degrees is None:
-        trigonometric_degrees = d_s[:]
+def draw_samples(d_s: list, num_samples: int, model_paths: list, ):
     assert len(d_s) == len(model_paths), f'{len(d_s) = } - {len(model_paths) = }'
     fig, axs = plt.subplots(len(d_s), num_samples, figsize=(14, 6))
     if len(d_s) == 1: axs = np.expand_dims(axs, 0)
     for i, (d, model_path) in enumerate(zip(d_s, model_paths)):
         print(f'{d = } - {model_path = }')
-        if trigonometric:
-            dataset = TrigonometricRandomGenerator(trigonometric_degrees[i], 2 * d + 1)
-        else:
-            dataset = BezierRandomGenerator(d, 2 * d + 1)
+        dataset = BezierRandomGenerator(d, 2 * d + 1)
         dl = DataLoader(dataset, batch_size=1)
         iter_dl = iter(dl)
         model = Model(d)
         model.eval()
         step = EvalStep(model, 'cpu')
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, 'cpu'))
         axs[i, 0].set_ylabel(f'd = {d}')
         for j in range(num_samples):
             batch_curves = next(iter_dl)
@@ -97,24 +93,66 @@ def draw_samples(d_s: list, num_samples: int, model_paths: list, trigonometric: 
             p_pred = bezier_curve_batch(pred['c_hat'], torch.linspace(0, 1, 1_000).unsqueeze(0)).squeeze(0)
             fig1, ax = plt.subplots(1, 1)
             plt.scatter(batch_curves['p'][0, :, 0], batch_curves['p'][0, :, 1], c='red', label='True points')
-            plt.scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=5)
+            plt.scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=20)
             plt.plot(p_pred[:, 0], p_pred[:, 1], c='blue', label='NN curve')
             plot_closed_form_f(batch_curves, d, uniform_t, 'Uniform', '#B8BF12', axs[i, j])
             plot_closed_form_f(batch_curves, d, chordlength_t, 'Chordlength', 'orange', axs[i, j])
             plot_closed_form_f(batch_curves, d, partial(centripetal_t, a=0.5), 'Centripetal', 'green', axs[i, j])
             fname = f'{d=}_{j}.png'
-            if trigonometric:
-                fname = 'trigonometric_' + fname
+            plt.legend()
             plt.savefig(PLOTS / fname)
             plt.close()
             axs[i, j].scatter(batch_curves['p'][0, :, 0], batch_curves['p'][0, :, 1], s=30.0, c='red', label='True points')
-            axs[i, j].scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=5)
+            axs[i, j].scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=20)
             axs[i, j].plot(p_pred[:, 0], p_pred[:, 1], c='blue', label='NN curve')
+            axs[i, j].xaxis.set_ticks([0,1])
+            axs[i, j].yaxis.set_ticks([])
+
     axs[0, -1].legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='x-small')
     fig.tight_layout()
     mosaic_fname = 'mosaic.png'
-    if trigonometric:
-        mosaic_fname = 'trigonometric_' + mosaic_fname
+    fig.savefig(PLOTS / mosaic_fname)
+
+
+@torch.no_grad()
+def draw_samples_trigonometric(d_s: list, num_samples: int, model_paths: list):
+    fig, axs = plt.subplots(len(d_s), num_samples * 4, figsize=(14, 7))  # 4 = num of r for each d
+    if len(d_s) == 1: axs = np.expand_dims(axs, 0)
+    for i, (d, model_path) in enumerate(zip(d_s, model_paths)):
+        print(f'{d = } - {model_path = }')
+        model = Model(d)
+        model.eval()
+        step = EvalStep(model, 'cpu')
+        model.load_state_dict(torch.load(model_path, 'cpu'))
+        axs[i, 0].set_ylabel(f'd = {d}')
+        r_seq = d_r_map[d]
+        for k, r in enumerate(r_seq):
+            print(f'{r = }')
+            dataset = TrigonometricRandomGenerator(r, 2 * d + 1)
+            dl = DataLoader(dataset, batch_size=1)
+            iter_dl = iter(dl)
+            axs[i, k * num_samples].set_title(f'{r=}')
+            for j in range(num_samples):
+                jk = k * num_samples + j
+                batch_curves = next(iter_dl)
+                pred = step(batch_curves)
+                p_pred = bezier_curve_batch(pred['c_hat'], torch.linspace(0, 1, 1_000).unsqueeze(0)).squeeze(0)
+                fig1, ax = plt.subplots(1, 1)
+                plt.scatter(batch_curves['p'][0, :, 0], batch_curves['p'][0, :, 1], c='red', label='True points')
+                plt.scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=20)
+                plt.plot(p_pred[:, 0], p_pred[:, 1], c='blue', label='NN curve')
+                plt.legend()
+                fname = f'trigonometric_{d=}_{r=}_{j}.png'
+                plt.savefig(PLOTS / fname)
+                plt.close()
+                axs[i, jk].scatter(batch_curves['p'][0, :, 0], batch_curves['p'][0, :, 1], s=30.0, c='red', label='True points')
+                axs[i, jk].scatter(pred['p_pred'][0, :, 0], pred['p_pred'][0, :, 1], c='blue', s=20)
+                axs[i, jk].plot(p_pred[:, 0], p_pred[:, 1], c='blue', label='NN curve')
+                axs[i, jk].xaxis.set_ticks([])
+                axs[i, jk].yaxis.set_ticks([])
+
+    axs[0, -1].legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='x-small')
+    mosaic_fname = 'trigonometric_mosaic.png'
     fig.savefig(PLOTS / mosaic_fname)
 
 
@@ -128,7 +166,10 @@ def main():
 
     args = parser.parse_args()
     print(f'{args = }')
-    draw_samples(args.d, args.n, args.model_path, args.trigonometric)
+    if args.trigonometric:
+        draw_samples_trigonometric(args.d, args.n, args.model_path)
+    else:
+        draw_samples(args.d, args.n, args.model_path)
 
 
 if __name__ == '__main__':
