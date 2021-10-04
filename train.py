@@ -12,8 +12,8 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from data import BezierRandomGenerator, solve_system_lambdas, bezier_curve_batch, get_optimal_c
-from model import Model
+from nn.data import BezierRandomGenerator, solve_system_lambdas, bezier_curve_batch, get_optimal_c
+from nn.model import Model
 
 ROOT = Path(__file__).parent
 RUN = ROOT / 'run'

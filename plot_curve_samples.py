@@ -7,11 +7,11 @@ import torch
 from path import Path
 from torch.utils.data import DataLoader
 
-from data import BezierRandomGenerator, bezier_curve_batch, get_optimal_c, bezier_curve, scale_points, \
-    TrigonometricRandomGenerator, trigonometric_fun, trigonometric_fun_t
-from model import Model
+from nn.data import BezierRandomGenerator, bezier_curve_batch, get_optimal_c, \
+                    bezier_curve, TrigonometricRandomGenerator, trigonometric_fun_a_b_t
+from nn.model import Model
 from test import d_r_map
-from train import TrainStep, EvalStep
+from train import EvalStep
 
 PLOTS = Path(__file__).parent.parent / 'plots'
 if not PLOTS.exists():
@@ -135,6 +135,12 @@ def draw_samples_trigonometric(d_s: list, num_samples: int, model_paths: list):
             for j in range(num_samples):
                 jk = k * num_samples + j
                 batch_curves = next(iter_dl)
+                t_range = torch.linspace(0, 6.28, 10_000)
+                for i in range(len(batch_curves['A'])):
+                    true_curve = trigonometric_fun_a_b_t(batch_curves['A'][i], batch_curves['B'][i], batch_curves['a_0'][i], r, t_range)
+                    plt.plot(true_curve['p'][:, 0], true_curve['p'][:, 1])
+                    plt.title(f'{r = } in range[0, 6.28')
+                    plt.show()
                 pred = step(batch_curves)
                 p_pred = bezier_curve_batch(pred['c_hat'], torch.linspace(0, 1, 1_000).unsqueeze(0)).squeeze(0)
                 fig1, ax = plt.subplots(1, 1)
@@ -156,20 +162,49 @@ def draw_samples_trigonometric(d_s: list, num_samples: int, model_paths: list):
     fig.savefig(PLOTS / mosaic_fname)
 
 
+def draw_sample_trigonometric_input_only(n: int):
+    for r in range(2, 8):
+        print(f'{r = }')
+        dataset = TrigonometricRandomGenerator(r, 10_000, -6.28, 6.28)
+        iter_dataset = iter(dataset)
+        for _ in range(n):
+            curve = next(iter_dataset)
+            p = curve['p']
+            plt.plot(p[:, 0], p[:, 1])
+            print(curve['t'])
+            idx_t0 = curve['t'].pow(2).argmin()
+            p_t0 = p[idx_t0]
+            idx_t1 = (curve['t'] - 1.0).pow(2).argmin()
+            p_t1 = p[idx_t1]
+            print(idx_t0, idx_t1)
+            plt.plot(p[idx_t0:idx_t1, 0], p[idx_t0:idx_t1,1], c='green', label='line in [0,1]')
+            plt.scatter(p_t0[0], p_t0[1], c='red', label='t=0')
+            plt.scatter(p_t1[0], p_t1[1], c='orange', label='t=1')
+            plt.legend()
+            plt.title(f'{r = } in range[-6.28, 6.28]')
+            plt.show()
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument('-d', '--polynomial-degree', type=int, dest='d', nargs='+')
     parser.add_argument('-m', '--model', type=Path, dest='model_path', nargs='+')
     parser.add_argument('-n', type=int, default=None, dest='n')
     parser.add_argument('-t', '--trigonometric', action='store_true', dest='trigonometric')
-    # parser.add_argument('-r', '--trigonometric-degree', type=int, nargs='+', dest='r')
+    parser.add_argument('--input-only' , action='store_true', dest='input_curve_only')
 
     args = parser.parse_args()
     print(f'{args = }')
-    if args.trigonometric:
-        draw_samples_trigonometric(args.d, args.n, args.model_path)
+    if args.input_curve_only:
+        if args.trigonometric:
+            draw_sample_trigonometric_input_only(args.n)
+        else:
+            raise NotImplementedError()
     else:
-        draw_samples(args.d, args.n, args.model_path)
+        if args.trigonometric:
+            draw_samples_trigonometric(args.d, args.n, args.model_path)
+        else:
+            draw_samples(args.d, args.n, args.model_path)
 
 
 if __name__ == '__main__':

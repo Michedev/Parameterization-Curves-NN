@@ -2,10 +2,10 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from model import Model
+from nn.model import Model
 from train import run_eval
 from path import Path
-from data import BezierRandomGenerator, TrigonometricRandomGenerator
+from nn.data import BezierRandomGenerator, TrigonometricRandomGenerator
 import re
 from argparse import ArgumentParser
 
@@ -35,7 +35,7 @@ def test_all_trigonometric(runs_dir, device: str, test_size: int, trigonometric_
     d_r_map = {2: range(2, 6), 3: range(2, 6), 4: range(3, 7), 5: range(4, 8)}
     for run in runs_dir.dirs():
         with open(run / 'config.yaml') as f:
-            config = yaml.load(f)
+            config = yaml.safe_load(f)
         d = config['d']
         model_paths = run.files('model*.pth')
         model_paths = [(model_path, int(model_regex.match(model_path.basename()).group(1)))
@@ -47,11 +47,14 @@ def test_all_trigonometric(runs_dir, device: str, test_size: int, trigonometric_
                 dataset = TrigonometricRandomGenerator(r, 2 * d + 1, trigonometric_start_range, trigonometric_end_range)
                 dl = DataLoader(dataset, 16)
                 model.load_state_dict(torch.load(model_path, map_location=device))
-                result = run_eval(model, device, run, dl, d, test_size, iteration, None)
-                result['r'] = r
-                with open(run / f'test_result_trigonometric_{iteration}_{r}.yaml', 'w') as f:
-                    yaml.safe_dump(result, f)
-                print('eval done to', str(model_path))
+                try:
+                    result = run_eval(model, device, run, dl, d, test_size, iteration, None)
+                    result['r'] = r
+                    with open(run / f'test_result_trigonometric_{iteration}_{r}.yaml', 'w') as f:
+                        yaml.safe_dump(result, f)
+                    print('eval done to', str(model_path))
+                except RuntimeError as e:
+                    print('Skipped', run, 'because RuntimeError', e.args)
 
 
 def setup_argparse():

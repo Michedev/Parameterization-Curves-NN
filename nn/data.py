@@ -96,10 +96,18 @@ def trigonometric_fun_t(d: int, t: torch.Tensor):
     """
 
     assert len(t.shape) == 1
-    n = len(t)
     a_0 = torch.randn(1, 2, device=t.device)
-    A = torch.randn(d, 2, 1, device=t.device)
-    B = torch.randn(d, 2, 1, device=t.device)
+    A = torch.randn(d, 2, device=t.device)
+    B = torch.randn(d, 2, device=t.device)
+    return trigonometric_fun_a_b_t(A, B, a_0, d, t)
+
+
+def trigonometric_fun_a_b_t(A, B, a_0, d, t):
+    n = len(t)
+    A = A.unsqueeze(-1)
+    B = B.unsqueeze(-1)
+    assert len(a_0.shape) == 2, a_0.shape
+    assert len(A.shape) == 3 and len(B.shape) == 3, (A.shape, B.shape)
     j = torch.arange(d, device=t.device) + 1
     j = j.view(d, 1, 1)
     t = t.view(1, 1, -1)
@@ -108,12 +116,12 @@ def trigonometric_fun_t(d: int, t: torch.Tensor):
     sin_jt = torch.sin(j * t)
     i = torch.arange(n, device=t.device) + 1
     i = i.unsqueeze(-1)   # [n, 1]
-    A_cos_jt = A * cos_jt  #[d, 2, n]
-    B_sin_jt = B * sin_jt  #[d, 2, n]
+    A_cos_jt = A * cos_jt  # [d, 2, n]
+    B_sin_jt = B * sin_jt  # [d, 2, n]
     A_cos_jt = A_cos_jt.sum(dim=0).permute(1, 0)  # [n, 2]
     B_sin_jt = B_sin_jt.sum(dim=0).permute(1, 0)  # [n, 2]
     p = a_0 + A_cos_jt + i * B_sin_jt
-    return dict(p=p, t=t, A=A, B=B)
+    return dict(p=p, t=t, A=A, B=B, a_0=a_0)
 
 
 class BezierRandomGenerator(IterableDataset):
@@ -158,13 +166,14 @@ class TrigonometricRandomGenerator(IterableDataset):
     def sample_trigonometric_points(self) -> dict:
         t = torch.rand(self.n) *(self.max_t_value - self.min_t_value) + self.min_t_value
         t[0] = self.min_t_value; t[-1] = self.max_t_value
+        t = torch.sort(t).values
         data = trigonometric_fun_t(self.d, t)
         p: torch.Tensor = data['p']
         p1 = scale_points(p)
         e = torch.zeros(p1.shape[0] - 1, 2)
         for i in range(p1.shape[0] - 1):
             e[i] = p1[i + 1] - p1[i]
-        return dict(p=p1, e=e, b=self.coef_bins)
+        return dict(p=p1, e=e, b=self.coef_bins, t=t)
 
 
 def solve_system_lambdas(lambdas):
